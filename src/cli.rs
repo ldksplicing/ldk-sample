@@ -282,7 +282,10 @@ pub(crate) async fn poll_for_user_input(
 					let channel_id_str = words.next();
 					let peer_pubkey_str = words.next();
 					let add_amt_sat_str = words.next();
-					if channel_id_str.is_none() || peer_pubkey_str.is_none() || add_amt_sat_str.is_none() {
+					if channel_id_str.is_none()
+						|| peer_pubkey_str.is_none()
+						|| add_amt_sat_str.is_none()
+					{
 						println!("ERROR: splicein has 3 required arguments: `splicein <channel_id> <peer_pubkey> <add_amt_satoshis>`");
 						continue;
 					}
@@ -316,7 +319,12 @@ pub(crate) async fn poll_for_user_input(
 						continue;
 					}
 
-					splice_in_channel(channel_id, peer_pubkey, add_amt_sat.unwrap(), channel_manager.clone());
+					splice_in_channel(
+						channel_id,
+						peer_pubkey,
+						add_amt_sat.unwrap(),
+						channel_manager.clone(),
+					);
 				}
 				"listpayments" => {
 					list_payments(inbound_payments.clone(), outbound_payments.clone())
@@ -836,7 +844,8 @@ fn force_close_channel(
 }
 
 fn splice_in_channel(
-	_channel_id: [u8; 32], _counterparty_node_id: PublicKey, _add_amt_sat: u64, _channel_manager: Arc<ChannelManager>,
+	_channel_id: [u8; 32], _counterparty_node_id: PublicKey, _add_amt_sat: u64,
+	_channel_manager: Arc<ChannelManager>,
 ) {
 	// TODO
 	println!("TODO splice-in");
