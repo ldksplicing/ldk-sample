@@ -278,6 +278,46 @@ pub(crate) async fn poll_for_user_input(
 					}
 				}
 				"listchannels" => list_channels(&channel_manager, &network_graph),
+				"splicein" => {
+					let channel_id_str = words.next();
+					let peer_pubkey_str = words.next();
+					let add_amt_sat_str = words.next();
+					if channel_id_str.is_none() || peer_pubkey_str.is_none() || add_amt_sat_str.is_none() {
+						println!("ERROR: splicein has 3 required arguments: `splicein <channel_id> <peer_pubkey> <add_amt_satoshis>`");
+						continue;
+					}
+
+					let channel_id_vec = hex_utils::to_vec(channel_id_str.unwrap());
+					if channel_id_vec.is_none() || channel_id_vec.as_ref().unwrap().len() != 32 {
+						println!("ERROR: couldn't parse channel_id");
+						continue;
+					}
+					let mut channel_id = [0; 32];
+					channel_id.copy_from_slice(&channel_id_vec.unwrap());
+
+					let peer_pubkey_vec = match hex_utils::to_vec(peer_pubkey_str.unwrap()) {
+						Some(peer_pubkey_vec) => peer_pubkey_vec,
+						None => {
+							println!("ERROR: couldn't parse peer_pubkey");
+							continue;
+						}
+					};
+					let peer_pubkey = match PublicKey::from_slice(&peer_pubkey_vec) {
+						Ok(peer_pubkey) => peer_pubkey,
+						Err(_) => {
+							println!("ERROR: couldn't parse peer_pubkey");
+							continue;
+						}
+					};
+
+					let add_amt_sat: Result<u64, _> = add_amt_sat_str.unwrap().parse();
+					if add_amt_sat.is_err() {
+						println!("ERROR: splice-in amount must be a number");
+						continue;
+					}
+
+					splice_in_channel(channel_id, peer_pubkey, add_amt_sat.unwrap(), channel_manager.clone());
+				}
 				"listpayments" => {
 					list_payments(inbound_payments.clone(), outbound_payments.clone())
 				}
@@ -448,6 +488,7 @@ fn help() {
 	println!("      closechannel <channel_id> <peer_pubkey>");
 	println!("      forceclosechannel <channel_id> <peer_pubkey>");
 	println!("      listchannels");
+	println!("      splicein <channel_id> <peer_pubkey> <add_amt_satoshis>");
 	println!("\n  Peers:");
 	println!("      connectpeer pubkey@host:port");
 	println!("      disconnectpeer <peer_pubkey>");
@@ -792,6 +833,13 @@ fn force_close_channel(
 		Ok(()) => println!("EVENT: initiating channel force-close"),
 		Err(e) => println!("ERROR: failed to force-close channel: {:?}", e),
 	}
+}
+
+fn splice_in_channel(
+	_channel_id: [u8; 32], _counterparty_node_id: PublicKey, _add_amt_sat: u64, _channel_manager: Arc<ChannelManager>,
+) {
+	// TODO
+	println!("TODO splice-in");
 }
 
 pub(crate) fn parse_peer_info(
