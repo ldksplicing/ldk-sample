@@ -278,6 +278,7 @@ pub(crate) async fn poll_for_user_input(
 					}
 				}
 				"listchannels" => list_channels(&channel_manager, &network_graph),
+				// #SPLICING
 				"splicein" => {
 					let channel_id_str = words.next();
 					let peer_pubkey_str = words.next();
@@ -843,12 +844,32 @@ fn force_close_channel(
 	}
 }
 
+/// #SPLICING
 fn splice_in_channel(
-	_channel_id: [u8; 32], _counterparty_node_id: PublicKey, _add_amt_sat: u64,
-	_channel_manager: Arc<ChannelManager>,
+	channel_id: [u8; 32], counterparty_node_id: PublicKey, add_amount_sats: u64,
+	channel_manager: Arc<ChannelManager>,
 ) {
-	// TODO
-	println!("TODO splice-in");
+	let funding_feerate_perkw = 1024; // TODO
+	let locktime = 0; // TODO
+	match channel_manager.splice_channel(
+		&channel_id,
+		&counterparty_node_id,
+		add_amount_sats as i64,
+		funding_feerate_perkw,
+		locktime,
+	) {
+		Ok(_) => {
+			println!(
+				"EVENT: initiated splice-in with add'l amount {} on channel {:?}. ",
+				add_amount_sats, channel_id
+			);
+			// return Ok(());
+		}
+		Err(e) => {
+			println!("ERROR: failed to initiate splice-in: {:?}", e);
+			// return Err(());
+		}
+	}
 }
 
 pub(crate) fn parse_peer_info(
