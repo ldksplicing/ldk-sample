@@ -4,6 +4,7 @@ use crate::{
 	ChannelManager, HTLCStatus, MillisatAmount, NetworkGraph, OnionMessenger, PaymentInfo,
 	PaymentInfoStorage, PeerManager,
 };
+use bitcoin::hashes::hex::ToHex;
 use bitcoin::hashes::sha256::Hash as Sha256;
 use bitcoin::hashes::Hash;
 use bitcoin::network::constants::Network;
@@ -860,8 +861,8 @@ fn splice_in_channel(
 	) {
 		Ok(_) => {
 			println!(
-				"EVENT: initiated splice-in with add'l amount {} on channel {:?}. ",
-				add_amount_sats, channel_id
+				"EVENT: initiated splice-in with add'l amount {} on channel {}. ",
+				add_amount_sats, channel_id.to_hex()
 			);
 			// return Ok(());
 		}
