@@ -4,6 +4,7 @@ use crate::{
 	ChannelManager, HTLCStatus, MillisatAmount, NetworkGraph, OnionMessenger, PaymentInfo,
 	PaymentInfoStorage, PeerManager,
 };
+use bitcoin::hashes::hex::ToHex;
 use bitcoin::hashes::sha256::Hash as Sha256;
 use bitcoin::hashes::Hash;
 use bitcoin::network::constants::Network;
@@ -307,6 +308,55 @@ pub(crate) fn poll_for_user_input(
 					&inbound_payments.lock().unwrap(),
 					&outbound_payments.lock().unwrap(),
 				),
+				// #SPLICING
+				"splicein" => {
+					let channel_id_str = words.next();
+					let peer_pubkey_str = words.next();
+					let add_amt_sat_str = words.next();
+					if channel_id_str.is_none()
+						|| peer_pubkey_str.is_none()
+						|| add_amt_sat_str.is_none()
+					{
+						println!("ERROR: splicein has 3 required arguments: `splicein <channel_id> <peer_pubkey> <add_amt_satoshis>`");
+						continue;
+					}
+
+					let channel_id_vec = hex_utils::to_vec(channel_id_str.unwrap());
+					if channel_id_vec.is_none() || channel_id_vec.as_ref().unwrap().len() != 32 {
+						println!("ERROR: couldn't parse channel_id");
+						continue;
+					}
+					let mut channel_id = [0; 32];
+					channel_id.copy_from_slice(&channel_id_vec.unwrap());
+
+					let peer_pubkey_vec = match hex_utils::to_vec(peer_pubkey_str.unwrap()) {
+						Some(peer_pubkey_vec) => peer_pubkey_vec,
+						None => {
+							println!("ERROR: couldn't parse peer_pubkey");
+							continue;
+						}
+					};
+					let peer_pubkey = match PublicKey::from_slice(&peer_pubkey_vec) {
+						Ok(peer_pubkey) => peer_pubkey,
+						Err(_) => {
+							println!("ERROR: couldn't parse peer_pubkey");
+							continue;
+						}
+					};
+
+					let add_amt_sat: Result<u64, _> = add_amt_sat_str.unwrap().parse();
+					if add_amt_sat.is_err() {
+						println!("ERROR: splice-in amount must be a number");
+						continue;
+					}
+
+					splice_in_channel(
+						channel_id,
+						peer_pubkey,
+						add_amt_sat.unwrap(),
+						channel_manager.clone(),
+					);
+				}
 				"closechannel" => {
 					let channel_id_str = words.next();
 					if channel_id_str.is_none() {
@@ -474,6 +524,7 @@ fn help() {
 	println!("      closechannel <channel_id> <peer_pubkey>");
 	println!("      forceclosechannel <channel_id> <peer_pubkey>");
 	println!("      listchannels");
+	println!("      splicein <channel_id> <peer_pubkey> <add_amt_satoshis>");
 	println!("\n  Peers:");
 	println!("      connectpeer pubkey@host:port");
 	println!("      disconnectpeer <peer_pubkey>");
@@ -815,6 +866,34 @@ fn force_close_channel(
 	{
 		Ok(()) => println!("EVENT: initiating channel force-close"),
 		Err(e) => println!("ERROR: failed to force-close channel: {:?}", e),
+	}
+}
+
+/// #SPLICING
+fn splice_in_channel(
+	channel_id: [u8; 32], counterparty_node_id: PublicKey, add_amount_sats: u64,
+	channel_manager: Arc<ChannelManager>,
+) {
+	let funding_feerate_perkw = 1024; // TODO
+	let locktime = 0; // TODO
+	match channel_manager.splice_channel(
+		&ChannelId(channel_id),
+		&counterparty_node_id,
+		add_amount_sats as i64,
+		funding_feerate_perkw,
+		locktime,
+	) {
+		Ok(_) => {
+			println!(
+				"EVENT: initiated splice-in with add'l amount {} on channel {}. ",
+				add_amount_sats, channel_id.to_hex()
+			);
+			// return Ok(());
+		}
+		Err(e) => {
+			println!("ERROR: failed to initiate splice-in: {:?}", e);
+			// return Err(());
+		}
 	}
 }
 

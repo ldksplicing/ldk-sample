@@ -1,6 +1,13 @@
 # ldk-sample
 Sample node implementation using LDK.
 
+## Splicing-HaPa1
+
+'Happy Path' PoC for Splicing
+
+- New `splicein` command (`splicein <channel_id> <peer_pubkey> <add_amt_satoshis>`). Works on an existing channel, and adds some more funds to it.
+
+
 ## Installation
 ```
 git clone https://github.com/lightningdevkit/ldk-sample

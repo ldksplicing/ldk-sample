@@ -188,23 +188,47 @@ impl BitcoindClient {
 	}
 
 	pub async fn create_raw_transaction(&self, outputs: Vec<HashMap<String, f64>>) -> RawTx {
+		self.create_raw_transaction_with_inputs(Vec::new(), outputs).await
+	}
+
+	pub async fn create_raw_transaction_with_inputs(
+		&self, inputs: Vec<(String, u32)>, outputs: Vec<HashMap<String, f64>>,
+	) -> RawTx {
+		// prepare inputs
+		// TODO more elegantly (map)
+		let mut inputs_prep: Vec<HashMap<String, serde_json::Value>> = Vec::new();
+		for (txid, output) in inputs {
+			let mut input_prep: HashMap<String, serde_json::Value> = HashMap::new();
+			input_prep.insert("txid".to_string(), serde_json::json!(txid));
+			input_prep.insert("vout".to_string(), serde_json::json!(output));
+			inputs_prep.push(input_prep);
+		}
+		let inputs_json = serde_json::json!(inputs_prep);
 		let outputs_json = serde_json::json!(outputs);
+		println!("inputs json: {}", inputs_json);
+		println!("outputs json: {}", outputs_json);
 		self.bitcoind_rpc_client
-			.call_method::<RawTx>(
-				"createrawtransaction",
-				&vec![serde_json::json!([]), outputs_json],
-			)
+			.call_method::<RawTx>("createrawtransaction", &vec![inputs_json, outputs_json])
 			.await
 			.unwrap()
 	}
 
-	pub async fn fund_raw_transaction(&self, raw_tx: RawTx) -> FundedTx {
-		let raw_tx_json = serde_json::json!(raw_tx.0);
-		let options = serde_json::json!({
+	pub async fn fund_raw_transaction(
+		&self, raw_tx: RawTx, opt_feerate_sat_per_vbyte: Option<f64>,
+	) -> FundedTx {
+		let fee_rate = if let Some(opt_fee) = opt_feerate_sat_per_vbyte {
+			opt_fee
+		} else {
 			// LDK gives us feerates in satoshis per KW but Bitcoin Core here expects fees
 			// denominated in satoshis per vB. First we need to multiply by 4 to convert weight
 			// units to virtual bytes, then divide by 1000 to convert KvB to vB.
-			"fee_rate": self.get_est_sat_per_1000_weight(ConfirmationTarget::Normal) as f64 / 250.0,
+			self.get_est_sat_per_1000_weight(ConfirmationTarget::Normal) as f64 / 250.0
+		};
+		println!("fee rate {}", fee_rate);
+		let raw_tx_json = serde_json::json!(raw_tx.0);
+		let options = serde_json::json!({
+			"add_inputs": true,
+			"fee_rate": fee_rate,
 			// While users could "cancel" a channel open by RBF-bumping and paying back to
 			// themselves, we don't allow it here as its easy to have users accidentally RBF bump
 			// and pay to the channel funding address, which results in loss of funds. Real
@@ -212,6 +236,7 @@ impl BitcoindClient {
 			// change address or to a new channel output negotiated with the same node.
 			"replaceable": false,
 		});
+		println!("options json: {}", options);
 		self.bitcoind_rpc_client
 			.call_method("fundrawtransaction", &[raw_tx_json, options])
 			.await

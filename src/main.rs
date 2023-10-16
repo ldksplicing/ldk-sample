@@ -9,7 +9,8 @@ mod sweep;
 use crate::bitcoind_client::BitcoindClient;
 use crate::disk::FilesystemLogger;
 use bitcoin::blockdata::transaction::Transaction;
-use bitcoin::consensus::encode;
+use bitcoin::consensus::{encode, Decodable};
+use bitcoin::hashes::hex::ToHex;
 use bitcoin::network::constants::Network;
 use bitcoin::BlockHash;
 use bitcoin_bech32::WitnessProgram;
@@ -201,7 +202,7 @@ async fn handle_ldk_events(
 
 			// Have your wallet put the inputs into the transaction such that the output is
 			// satisfied.
-			let funded_tx = bitcoind_client.fund_raw_transaction(raw_tx).await;
+			let funded_tx = bitcoind_client.fund_raw_transaction(raw_tx, None).await;
 
 			// Sign the final funding transaction and broadcast it.
 			let signed_tx = bitcoind_client.sign_raw_transaction_with_wallet(funded_tx.hex).await;
@@ -222,6 +223,139 @@ async fn handle_ldk_events(
 				print!("> ");
 				io::stdout().flush().unwrap();
 			}
+		}
+		Event::SpliceAcked {
+			channel_id,
+			counterparty_node_id,
+			current_funding_outpoint,
+			pre_channel_value_satoshis,
+			post_channel_value_satoshis,
+			output_script,
+		} => {
+			println!(
+				"\nDebug SpliceAcked  channel_id {}  pre-post {} {}  curr funding {} {}",
+				&channel_id,
+				pre_channel_value_satoshis,
+				post_channel_value_satoshis,
+				current_funding_outpoint.txid,
+				current_funding_outpoint.vout,
+			);
+
+			// Construct the splicing funding transaction.
+			// We need to make a tx with one output the new funding output (multisig),
+			// one input the previous funding tx (multisig),
+			// and additional inputs to fund the difference from the wallet, and probably also a change output.
+			// It's not possible to make it in one go, the wallet funding cannot be used as the prev input is not from the wallet.
+			// So we create a temp tx with one output which is only the difference amount, and no input, and fund that.
+			// Then we take the funding inputs and (optional) change, and create a new tx with those, plus the funding input and the funding output.
+
+			let addr = WitnessProgram::from_scriptpubkey(
+				&output_script[..],
+				match network {
+					Network::Bitcoin => bitcoin_bech32::constants::Network::Bitcoin,
+					Network::Testnet => bitcoin_bech32::constants::Network::Testnet,
+					Network::Regtest => bitcoin_bech32::constants::Network::Regtest,
+					Network::Signet => bitcoin_bech32::constants::Network::Signet,
+				},
+			)
+			.expect("Lightning funding tx should always be to a SegWit output")
+			.to_address();
+
+			let splice_increase_amount = post_channel_value_satoshis - pre_channel_value_satoshis;
+			let mut temp_outputs = vec![HashMap::with_capacity(1)];
+			temp_outputs[0].insert(addr.clone(), splice_increase_amount as f64 / 100_000_000.0);
+			let raw_temp_tx =
+				bitcoind_client.create_raw_transaction_with_inputs(Vec::new(), temp_outputs).await;
+
+			let funded_temp_tx = bitcoind_client.fund_raw_transaction(raw_temp_tx, Some(2.5)).await;
+
+			println!("funded temp tx {}", funded_temp_tx.hex);
+
+			let temp_tx_data = hex::decode(funded_temp_tx.hex).unwrap();
+			let temp_tx =
+				Transaction::consensus_decode_from_finite_reader(&mut temp_tx_data.as_slice())
+					.unwrap();
+			let funding_inputs = temp_tx.input.clone();
+			let change_output = if temp_tx.output.len() == 1 {
+				None
+			} else {
+				Some(
+					// need to pick the output with different amount
+					if temp_tx.output[0].value == splice_increase_amount {
+						temp_tx.output[1].clone()
+					} else {
+						temp_tx.output[0].clone()
+					},
+				)
+			};
+			println!(
+				"temp tx  len {}  txid {} {:?} \n  inputs:",
+				temp_tx.encode().len(),
+				temp_tx.txid(),
+				temp_tx,
+			);
+			for i in &funding_inputs {
+				println!("    {:?}", i);
+			}
+			println!(
+				"  change output: {:?}",
+				if let Some(change) = &change_output {
+					format!("{:?}", change).to_string()
+				} else {
+					"None".to_string()
+				}
+			);
+
+			// Now build the real funding tx
+			let mut inputs =
+				vec![(current_funding_outpoint.txid.to_hex(), current_funding_outpoint.vout)];
+			for i in &funding_inputs {
+				inputs.push((i.previous_output.txid.to_string(), i.previous_output.vout));
+			}
+			let mut outputs = vec![HashMap::with_capacity(1)];
+			outputs[0].insert(addr, post_channel_value_satoshis as f64 / 100_000_000.0);
+			if let Some(change) = &change_output {
+				let change_address =
+					bitcoin::Address::from_script(&change.script_pubkey, network).unwrap();
+				println!("change address {:>}", change_address);
+				outputs.push(HashMap::with_capacity(1));
+				outputs[1].insert(change_address.to_string(), change.value as f64 / 100_000_000.0);
+			}
+			let raw_tx = bitcoind_client.create_raw_transaction_with_inputs(inputs, outputs).await;
+			println!("raw tx {}", raw_tx.0);
+
+			let tx = Transaction::consensus_decode_from_finite_reader(
+				&mut hex::decode(raw_tx.0.clone()).unwrap().as_slice(),
+			)
+			.unwrap();
+			println!("parsed tx data {} {} {:?}", tx.encode().len(), tx.txid(), tx);
+
+			// Sign the final funding transaction
+			let signed_tx = bitcoind_client.sign_raw_transaction_with_wallet(raw_tx.0).await;
+			// the previous funding input cannot be signed by the wallet (multisig), so this tx is not fully signed
+			assert_eq!(signed_tx.complete, false);
+			let final_tx: Transaction =
+				encode::deserialize(&hex_utils::to_vec(&signed_tx.hex).unwrap()).unwrap();
+			// Give the funding transaction back to LDK for opening the channel.
+			let splice_res = channel_manager.splice_transaction_generated(
+				&channel_id,
+				&counterparty_node_id,
+				final_tx.clone(),
+			);
+			if splice_res.is_err() {
+				println!(
+					"\nERROR: Channel went away before we could splice it. The peer disconnected or refused the channel. {:?}", splice_res.err().unwrap());
+			} else {
+				println!(
+					"\nEVENT: Channel {} splicing tx created, from {} to {}, txid {}",
+					&channel_id,
+					pre_channel_value_satoshis,
+					post_channel_value_satoshis,
+					final_tx.txid(),
+				);
+			}
+			print!("> ");
+			io::stdout().flush().unwrap();
 		}
 		Event::PaymentClaimable {
 			payment_hash,
@@ -651,6 +785,10 @@ async fn start_ldk() {
 	user_config.channel_handshake_limits.force_announced_channel_preference = false;
 	user_config.channel_handshake_config.negotiate_anchors_zero_fee_htlc_tx = true;
 	user_config.manually_accept_inbound_channels = true;
+
+	// Use low minimal confirmation count (testing)
+	user_config.channel_handshake_config.minimum_depth = 1;
+
 	let mut restarting_node = true;
 	let (channel_manager_blockhash, channel_manager) = {
 		if let Ok(mut f) = fs::File::open(format!("{}/manager", ldk_data_dir.clone())) {
