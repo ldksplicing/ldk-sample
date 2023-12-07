@@ -11,14 +11,14 @@ edition = "2018"
 # To build against updated LDK built locally, you need to change the following 7 lines to the form:
 # lightning = { path = "<RELATIVE_PATH_TO_LDK_FOLDER>/lightning", features = ["max_level_trace"] }
 # instead of
-# lightning = { version = "0.0.117", features = ["max_level_trace"] }
-lightning = { version = "0.0.117", features = ["max_level_trace"] }
-lightning-block-sync = { version = "0.0.117", features = [ "rpc-client", "tokio" ] }
-lightning-invoice = { version = "0.25.0" }
-lightning-net-tokio = { version = "0.0.117" }
-lightning-persister = { version = "0.0.117" }
-lightning-background-processor = { version = "0.0.117", features = [ "futures" ] }
-lightning-rapid-gossip-sync = { version = "0.0.117" }
+# lightning = { version = "0.0.118", features = ["max_level_trace"] }
+lightning = { version = "0.0.118", features = ["max_level_trace"] }
+lightning-block-sync = { version = "0.0.118", features = [ "rpc-client", "tokio" ] }
+lightning-invoice = { version = "0.26.0" }
+lightning-net-tokio = { version = "0.0.118" }
+lightning-persister = { version = "0.0.118" }
+lightning-background-processor = { version = "0.0.118", features = [ "futures" ] }
+lightning-rapid-gossip-sync = { version = "0.0.118" }
 
 base64 = "0.13.0"
 bitcoin = "0.29.0"
